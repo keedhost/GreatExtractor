@@ -80,11 +80,14 @@ jobs:
           echo "OK: бінарник запускається в порожньому контейнері без жодних системних бібліотек" \
             | tee -a smoke-test-linux-static-${{ matrix.arch }}.log
 
+      - name: Перейменувати бінарник під унікальну для релізу назву
+        run: cp "${BIN_NAME}" "${BIN_NAME}-linux-${{ matrix.arch }}"
+
       - uses: actions/upload-artifact@v4
         with:
           name: greatie-linux-${{ matrix.arch }}-static
           path: |
-            ${{ env.BIN_NAME }}
+            ${{ env.BIN_NAME }}-linux-${{ matrix.arch }}
             smoke-test-linux-static-${{ matrix.arch }}.log
 
   # ------------------------------------------------------------------
@@ -210,11 +213,14 @@ jobs:
         run: |
           .\scripts\smoke_test.ps1 -BinPath "target\x86_64-pc-windows-msvc\release\greatie.exe" -LogPath "smoke-test-windows-x86_64.log"
 
+      - name: Перейменувати бінарник під унікальну для релізу назву
+        run: Copy-Item "target\x86_64-pc-windows-msvc\release\greatie.exe" "greatie-windows-x86_64.exe"
+
       - uses: actions/upload-artifact@v4
         with:
           name: greatie-windows-x86_64-static
           path: |
-            target/x86_64-pc-windows-msvc/release/greatie.exe
+            greatie-windows-x86_64.exe
             smoke-test-windows-x86_64.log
 
   # ------------------------------------------------------------------
@@ -248,11 +254,14 @@ jobs:
         run: |
           .\scripts\smoke_test.ps1 -BinPath "target\aarch64-pc-windows-msvc\release\greatie.exe" -LogPath "smoke-test-windows-aarch64.log"
 
+      - name: Перейменувати бінарник під унікальну для релізу назву
+        run: Copy-Item "target\aarch64-pc-windows-msvc\release\greatie.exe" "greatie-windows-aarch64.exe"
+
       - uses: actions/upload-artifact@v4
         with:
           name: greatie-windows-aarch64-static
           path: |
-            target/aarch64-pc-windows-msvc/release/greatie.exe
+            greatie-windows-aarch64.exe
             smoke-test-windows-aarch64.log
 
   # ------------------------------------------------------------------
@@ -295,11 +304,14 @@ jobs:
             exit 1
           fi
 
+      - name: Перейменувати бінарник під унікальну для релізу назву
+        run: cp "target/aarch64-apple-darwin/release/${BIN_NAME}" "${BIN_NAME}-macos-aarch64"
+
       - uses: actions/upload-artifact@v4
         with:
           name: greatie-macos-aarch64
           path: |
-            target/aarch64-apple-darwin/release/${{ env.BIN_NAME }}
+            ${{ env.BIN_NAME }}-macos-aarch64
             smoke-test-macos-aarch64.log
 
   # ------------------------------------------------------------------
@@ -339,11 +351,14 @@ jobs:
             chmod +x scripts/smoke_test.sh
             ./scripts/smoke_test.sh target/release/greatie "$LINKING" smoke-test-freebsd-x86_64.log
 
+      - name: Перейменувати бінарник під унікальну для релізу назву
+        run: cp "target/release/${BIN_NAME}" "${BIN_NAME}-freebsd-x86_64"
+
       - uses: actions/upload-artifact@v4
         with:
           name: greatie-freebsd-x86_64
           path: |
-            target/release/${{ env.BIN_NAME }}
+            ${{ env.BIN_NAME }}-freebsd-x86_64
             smoke-test-freebsd-x86_64.log
 
   # ------------------------------------------------------------------
