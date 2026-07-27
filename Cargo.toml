@@ -1,0 +1,67 @@
+[package]
+name = "great-extractor"
+version = "0.1.0"
+edition = "2024"
+description = "Search and extraction of embedded files by magic signatures"
+license = "MIT"
+authors = ["Andrii Kondratiev <h0st@ukr.net>"]
+
+# The package name remains the project's "official" name (Great Extractor),
+# while the executable is the shorter "greatie".
+[[bin]]
+name = "greatie"
+path = "src/main.rs"
+
+[dependencies]
+aho-corasick = "1.1.4"
+anyhow = "1.0.103"
+clap = { version = "4.6.1", features = ["derive"] }
+comfy-table = "7.2.2"
+crossterm = "0.29.0"
+csv = "1.4.0"
+dirs = "6.0.0"
+flate2 = "1.1.9"
+goblin = "0.10.7"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "ico", "tiff", "webp"] }
+indicatif = "0.18.6"
+memchr = "2.8.2"
+memmap2 = "0.9.11"
+ratatui = "0.30.2"
+ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm", "image-defaults"] }
+rayon = "1.12.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+serde_yaml = "0.9.34"
+
+# Metadata for `cargo deb` (requires `cargo-deb`). The binary for the
+# package is built as a regular dynamic (glibc) target — deliberately NOT
+# a static musl build, since the package should rely on libraries from
+# the distro's repository. The `depends` field is left at its default
+# value `"$auto"` — cargo-deb determines dependencies itself via
+# `ldd`/`dpkg -S` on the actually built binary, instead of them being
+# listed by hand.
+[package.metadata.deb]
+name = "greatie"
+maintainer = "Andrii Kondratiev <h0st@ukr.net>"
+copyright = "2026, Andrii Kondratiev <h0st@ukr.net>"
+section = "utils"
+priority = "optional"
+extended-description = """\
+Great Extractor (`greatie`) — a CLI/TUI utility for finding and extracting \
+files embedded in an arbitrary binary file, by magic signatures \
+(a binwalk analogue)."""
+assets = [
+    ["target/release/greatie", "usr/bin/greatie", "755"],
+]
+
+# Metadata for `cargo generate-rpm` (requires `cargo-generate-rpm`).
+# `auto-req` is left at its default value `"auto"` — the tool determines
+# `Requires:` itself from the actually built binary (via `find-requires`
+# if present on the system, otherwise a built-in ELF-based analysis),
+# rather than from a statically written list.
+[package.metadata.generate-rpm]
+name = "greatie"
+license = "MIT"
+assets = [
+    { source = "target/release/greatie", dest = "/usr/bin/greatie", mode = "755" },
+]

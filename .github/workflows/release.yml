@@ -1,0 +1,380 @@
+name: Release
+
+# Повний матричний білд статичних бінарників + Linux-пакетів (.deb/.rpm),
+# з обов'язковими sanity/smoke-тестами КОЖНОГО артифакту перед тим, як він
+# потрапляє в GitHub Release. Жоден артифакт не деплоїться, поки його job
+# не пройшов власний smoke-test.
+#
+# Запуск: push тегу вигляду v* (створює/оновлює GitHub Release) або вручну
+# через workflow_dispatch (повний прогін білд+тест без публікації релізу).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: greatie
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # Linux — статичні (musl) бінарники, x86_64 та aarch64 (Raspberry Pi).
+  # Нативна збірка на кожній архітектурі окремо (без крос-компіляції) —
+  # той самий підхід, що й у scripts/build_linux.sh.
+  # ------------------------------------------------------------------
+  linux-static:
+    name: Linux static (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Встановити musl-tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq musl-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-static-${{ matrix.arch }}
+
+      - name: Збірка (статична, musl)
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Sanity/smoke-тест
+        run: |
+          chmod +x scripts/smoke_test.sh
+          ./scripts/smoke_test.sh \
+            "target/${{ matrix.target }}/release/${BIN_NAME}" \
+            static \
+            "smoke-test-linux-static-${{ matrix.arch }}.log"
+
+      - name: "Доказ справжньої статичності: запуск у FROM scratch контейнері"
+        run: |
+          cp "target/${{ matrix.target }}/release/${BIN_NAME}" "${BIN_NAME}"
+          cat > Dockerfile.smoke <<'EOF'
+          FROM scratch
+          COPY greatie /greatie
+          ENTRYPOINT ["/greatie"]
+          EOF
+          docker build -t greatie-scratch-smoke -f Dockerfile.smoke .
+          docker run --rm greatie-scratch-smoke --version
+          docker run --rm greatie-scratch-smoke --formats
+          echo "OK: бінарник запускається в порожньому контейнері без жодних системних бібліотек" \
+            | tee -a smoke-test-linux-static-${{ matrix.arch }}.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greatie-linux-${{ matrix.arch }}-static
+          path: |
+            ${{ env.BIN_NAME }}
+            smoke-test-linux-static-${{ matrix.arch }}.log
+
+  # ------------------------------------------------------------------
+  # Linux — динамічні (glibc) бінарники + .deb/.rpm пакети, x86_64 та
+  # aarch64. Пакети НЕ статичні навмисно: залежності мають підтягуватись
+  # пакетним менеджером цільової системи, тож перевіряємо це, встановлюючи
+  # щойно зібраний пакет у чистому контейнері дистрибутиву й перевіряючи
+  # ldd після встановлення.
+  # ------------------------------------------------------------------
+  linux-packages:
+    name: Linux packages (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            rpm_arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            rpm_arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Встановити rpm-tools (для точнішого auto-req у cargo-generate-rpm)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-packages-${{ matrix.arch }}
+
+      - name: Збірка (динамічна, glibc — ціль хосту за замовчуванням)
+        run: cargo build --release --locked
+
+      - name: Sanity/smoke-тест сирого бінарника
+        run: |
+          chmod +x scripts/smoke_test.sh
+          ./scripts/smoke_test.sh \
+            "target/release/${BIN_NAME}" \
+            dynamic \
+            "smoke-test-linux-bin-${{ matrix.arch }}.log"
+
+      - name: cargo deb (depends = "$auto" — залежності визначаються по бінарнику)
+        run: cargo deb --no-build
+
+      - name: cargo generate-rpm (auto-req = "auto")
+        run: cargo generate-rpm
+
+      - name: "Перевірка .deb: встановлення в чистому debian:bookworm-slim і auto-resolve залежностей"
+        run: |
+          DEB_FILE=$(ls target/debian/*.deb)
+          docker run --rm -v "$PWD:/work" -w /work debian:bookworm-slim bash -euxo pipefail -c "
+            apt-get update -qq
+            apt-get install -y -qq \"./${DEB_FILE}\"
+            echo '--- ldd після встановлення пакета ---'
+            ldd \"\$(command -v ${BIN_NAME})\"
+            if ldd \"\$(command -v ${BIN_NAME})\" | grep -qi 'not found'; then
+              echo '!! Незадоволені залежності після встановлення .deb' >&2
+              exit 1
+            fi
+            ${BIN_NAME} --version
+            ${BIN_NAME} --formats
+          " | tee smoke-test-linux-deb-${{ matrix.arch }}.log
+
+      - name: "Перевірка .rpm: встановлення в чистому fedora:latest і auto-resolve залежностей"
+        run: |
+          RPM_FILE=$(ls target/generate-rpm/*.rpm)
+          docker run --rm -v "$PWD:/work" -w /work fedora:latest bash -euxo pipefail -c "
+            dnf install -y -q \"./${RPM_FILE}\"
+            echo '--- ldd після встановлення пакета ---'
+            ldd \"\$(command -v ${BIN_NAME})\"
+            if ldd \"\$(command -v ${BIN_NAME})\" | grep -qi 'not found'; then
+              echo '!! Незадоволені залежності після встановлення .rpm' >&2
+              exit 1
+            fi
+            ${BIN_NAME} --version
+            ${BIN_NAME} --formats
+          " | tee smoke-test-linux-rpm-${{ matrix.arch }}.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greatie-linux-${{ matrix.arch }}-packages
+          path: |
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
+            smoke-test-linux-bin-${{ matrix.arch }}.log
+            smoke-test-linux-deb-${{ matrix.arch }}.log
+            smoke-test-linux-rpm-${{ matrix.arch }}.log
+
+  # ------------------------------------------------------------------
+  # Windows x86_64 — нативна збірка, статичний CRT (+crt-static), щоб не
+  # залежати від наявності VC++ Redistributable на цільовій машині.
+  # ------------------------------------------------------------------
+  windows-x86_64:
+    name: Windows static (x86_64)
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: "-C target-feature=+crt-static"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x86_64
+
+      - name: Збірка (статичний CRT)
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Sanity/smoke-тест
+        run: |
+          .\scripts\smoke_test.ps1 -BinPath "target\x86_64-pc-windows-msvc\release\greatie.exe" -LogPath "smoke-test-windows-x86_64.log"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greatie-windows-x86_64-static
+          path: |
+            target/x86_64-pc-windows-msvc/release/greatie.exe
+            smoke-test-windows-x86_64.log
+
+  # ------------------------------------------------------------------
+  # Windows ARM64 — нативна збірка й запуск на hosted ARM64-раннері
+  # (`windows-11-arm`). Це відносно новий клас GitHub-hosted раннерів
+  # (public preview) — якщо він недоступний для цього репозиторію/акаунта,
+  # цей job не зможе запланувати виконання; тоді потрібно або увімкнути
+  # доступ у налаштуваннях Actions, або замінити на крос-компіляцію з
+  # windows-latest (без можливості реального smoke-запуску ARM64-коду).
+  # ------------------------------------------------------------------
+  windows-aarch64:
+    name: Windows static (aarch64)
+    runs-on: windows-11-arm
+    env:
+      RUSTFLAGS: "-C target-feature=+crt-static"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-aarch64
+
+      - name: Збірка (статичний CRT, нативно на ARM64)
+        run: cargo build --release --locked --target aarch64-pc-windows-msvc
+
+      - name: Sanity/smoke-тест
+        run: |
+          .\scripts\smoke_test.ps1 -BinPath "target\aarch64-pc-windows-msvc\release\greatie.exe" -LogPath "smoke-test-windows-aarch64.log"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greatie-windows-aarch64-static
+          path: |
+            target/aarch64-pc-windows-msvc/release/greatie.exe
+            smoke-test-windows-aarch64.log
+
+  # ------------------------------------------------------------------
+  # macOS — лише Apple Silicon (aarch64). Повністю статичний бінарник на
+  # macOS неможливий у принципі (dyld завжди динамічно лінкує libSystem) —
+  # перевіряємо натомість, що серед залежностей лише системні бібліотеки
+  # macOS, без сторонніх .dylib.
+  # ------------------------------------------------------------------
+  macos-aarch64:
+    name: macOS (aarch64, Apple Silicon)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-aarch64
+
+      - name: Збірка
+        run: cargo build --release --locked --target aarch64-apple-darwin
+
+      - name: Sanity/smoke-тест
+        run: |
+          chmod +x scripts/smoke_test.sh
+          ./scripts/smoke_test.sh \
+            "target/aarch64-apple-darwin/release/${BIN_NAME}" \
+            dynamic \
+            smoke-test-macos-aarch64.log
+
+      - name: "Перевірка, що всі залежності — лише системні бібліотеки macOS"
+        run: |
+          OTOOL_OUT=$(otool -L "target/aarch64-apple-darwin/release/${BIN_NAME}")
+          echo "$OTOOL_OUT" | tee -a smoke-test-macos-aarch64.log
+          if echo "$OTOOL_OUT" | tail -n +2 | grep -vE '^\s*(/usr/lib/|/System/Library/)'; then
+            echo "!! Знайдено залежність поза системними бібліотеками macOS" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greatie-macos-aarch64
+          path: |
+            target/aarch64-apple-darwin/release/${{ env.BIN_NAME }}
+            smoke-test-macos-aarch64.log
+
+  # ------------------------------------------------------------------
+  # FreeBSD x86_64 — немає GitHub-hosted раннера під FreeBSD, тож піднімаємо
+  # справжню FreeBSD VM (vmactions/freebsd-vm) на звичайному ubuntu-хості:
+  # білд і smoke-тест виконуються нативно ВСЕРЕДИНІ FreeBSD, а не крос-
+  # компіляцією "навмання". Статичне лінкування (+crt-static) пробуємо як
+  # best-effort — якщо тулчейн FreeBSD-образу його не підтримує, падаємо
+  # назад на звичайну динамічну збірку й позначаємо це в smoke-тесті.
+  # ------------------------------------------------------------------
+  freebsd-x86_64:
+    name: FreeBSD (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Білд і smoke-тест у FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.2"
+          arch: x86_64
+          usesh: true
+          copyback: true
+          prepare: |
+            pkg install -y curl bash
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+            sh /tmp/rustup.sh -y --profile minimal
+          run: |
+            . "$HOME/.cargo/env"
+            LINKING="dynamic"
+            if RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --locked; then
+              LINKING="static"
+            else
+              echo "Статична збірка (+crt-static) не підтримується цим тулчейном FreeBSD — збираю динамічно" >&2
+              cargo build --release --locked
+            fi
+            chmod +x scripts/smoke_test.sh
+            ./scripts/smoke_test.sh target/release/greatie "$LINKING" smoke-test-freebsd-x86_64.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greatie-freebsd-x86_64
+          path: |
+            target/release/${{ env.BIN_NAME }}
+            smoke-test-freebsd-x86_64.log
+
+  # ------------------------------------------------------------------
+  # Публікація: лише коли всі білд+smoke-test job'и вище зелені. На
+  # push тегу v* створює/оновлює GitHub Release з усіма артифактами;
+  # на workflow_dispatch (без тегу) цей job просто пропускається.
+  # ------------------------------------------------------------------
+  release:
+    name: Публікація в GitHub Release
+    needs:
+      - linux-static
+      - linux-packages
+      - windows-x86_64
+      - windows-aarch64
+      - macos-aarch64
+      - freebsd-x86_64
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: false
+
+      - name: Список артифактів для релізу
+        run: find dist -type f | sort
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
