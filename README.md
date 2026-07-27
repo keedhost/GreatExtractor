@@ -104,6 +104,13 @@ Run `greatie <command> --help` for the full list of options for a given command.
 
 The TUI persists your chosen color theme to `~/.GreatExtractor/config.yaml`. The file is optional — a missing or corrupted config silently falls back to defaults instead of failing.
 
+## Supported formats
+
+The full reference of all 200 supported signatures, grouped by category, with extension and boundary-detection method for each:
+
+- [`formats.md`](formats.md) — English
+- [`formats_ukr.md`](formats_ukr.md) — Ukrainian
+
 ## CI/CD
 
 `.github/workflows/release.yml` builds and **smoke-tests** every artifact before it is published:
