@@ -1,2 +1,17 @@
+# Build artifacts
 /target
 /dist
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+
+# Smoke-test artifacts (scripts/smoke_test.sh|ps1, local or CI runs)
+smoke-test*.log
+Dockerfile.smoke
+

@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::about;
 
 #[derive(Parser)]
-#[command(name = about::BIN_NAME, about = about::SHORT_ABOUT, long_about = about::LONG_ABOUT)]
+#[command(name = about::BIN_NAME, version, about = about::SHORT_ABOUT, long_about = about::LONG_ABOUT)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
