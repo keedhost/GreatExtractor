@@ -404,6 +404,11 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          # Smoke-test логи лишаються доступними в artifacts самого workflow-
+          # прогону (для діагностики) — у публічний реліз потрапляють лише
+          # реальні дистрибутиви (бінарники, .deb, .rpm).
+          files: |
+            dist/*
+            !dist/smoke-test-*.log
           fail_on_unmatched_files: true
           generate_release_notes: true
