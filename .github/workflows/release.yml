@@ -407,8 +407,12 @@ jobs:
           # Smoke-test логи лишаються доступними в artifacts самого workflow-
           # прогону (для діагностики) — у публічний реліз потрапляють лише
           # реальні дистрибутиви (бінарники, .deb, .rpm).
+          # fail_on_unmatched_files свідомо вимкнено: дія перевіряє на
+          # "є збіги" КОЖЕН рядок патерну окремо, а виключний рядок
+          # (`!dist/...`) за визначенням ніколи сам по собі нічого не
+          # "матчить" — з увімкненим прапорцем це завжди фейлилось би.
           files: |
             dist/*
             !dist/smoke-test-*.log
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           generate_release_notes: true
