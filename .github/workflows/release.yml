@@ -176,12 +176,17 @@ jobs:
             ${BIN_NAME} --formats
           " | tee smoke-test-linux-rpm-${{ matrix.arch }}.log
 
+      - name: Скопіювати пакети в корінь (пласка структура для релізу, без вкладених директорій)
+        run: |
+          cp target/debian/*.deb .
+          cp target/generate-rpm/*.rpm .
+
       - uses: actions/upload-artifact@v4
         with:
           name: greatie-linux-${{ matrix.arch }}-packages
           path: |
-            target/debian/*.deb
-            target/generate-rpm/*.rpm
+            *.deb
+            *.rpm
             smoke-test-linux-bin-${{ matrix.arch }}.log
             smoke-test-linux-deb-${{ matrix.arch }}.log
             smoke-test-linux-rpm-${{ matrix.arch }}.log
@@ -383,13 +388,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          merge-multiple: false
+          merge-multiple: true
 
       - name: Список артифактів для релізу
-        run: find dist -type f | sort
+        run: find dist -mindepth 1 | sort
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/*
+          files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true
