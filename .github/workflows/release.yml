@@ -145,10 +145,18 @@ jobs:
       - name: cargo generate-rpm (auto-req = "auto")
         run: cargo generate-rpm
 
-      - name: "Перевірка .deb: встановлення в чистому debian:bookworm-slim і auto-resolve залежностей"
+      - name: "Перевірка .deb: встановлення в чистому ubuntu:24.04 і auto-resolve залежностей"
+        # cargo-deb визначає Depends по фактичній версії glibc на хості збірки
+        # (тут — ubuntu-latest = Ubuntu 24.04, glibc 2.39), тож пакет коректно
+        # встановлюється лише на дистрибутиви з glibc того ж рівня чи новіше.
+        # debian:bookworm-slim (Debian 12, glibc ~2.36) свідомо НЕ підходить
+        # для цієї перевірки — апт там завжди впаде на "held broken packages"
+        # через unsatisfiable "libc6 (>= 2.39)", і це не помилка пакування, а
+        # сподіваний наслідок того, на якому хості збирався .deb.
         run: |
+          set -euo pipefail
           DEB_FILE=$(ls target/debian/*.deb)
-          docker run --rm -v "$PWD:/work" -w /work debian:bookworm-slim bash -euxo pipefail -c "
+          docker run --rm -v "$PWD:/work" -w /work ubuntu:24.04 bash -euxo pipefail -c "
             apt-get update -qq
             apt-get install -y -qq \"./${DEB_FILE}\"
             echo '--- ldd після встановлення пакета ---'
@@ -163,6 +171,7 @@ jobs:
 
       - name: "Перевірка .rpm: встановлення в чистому fedora:latest і auto-resolve залежностей"
         run: |
+          set -euo pipefail
           RPM_FILE=$(ls target/generate-rpm/*.rpm)
           docker run --rm -v "$PWD:/work" -w /work fedora:latest bash -euxo pipefail -c "
             dnf install -y -q \"./${RPM_FILE}\"
